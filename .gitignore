@@ -4,3 +4,8 @@ dist
 *.log
 .DS_Store
 .firebase
+
+# Generated country data (regenerated during build)
+src/data/countries.geo.json
+src/data/countries.buffered.geo.json
+src/data/countries.meta.json

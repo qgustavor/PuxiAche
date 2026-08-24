@@ -34,7 +34,10 @@ jobs:
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
 
-      - name: Build
+      - name: Build country data
+        run: bun run build:countries
+
+      - name: Build app
         run: bun run build
 
       - name: Upload GitHub Pages artifact
