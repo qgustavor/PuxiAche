@@ -10,7 +10,8 @@
     "prebuild": "bun run scripts/check-boundary-data.mjs",
     "build": "vite build",
     "preview": "vite preview",
-    "build:countries": "bun run scripts/build-countries.mjs"
+    "build:countries": "bun run scripts/build-countries.mjs",
+    "update:countries": "bun run scripts/update-countries.mjs"
   },
   "dependencies": {
     "@urlpack/msgpack": "^2.0.1",
