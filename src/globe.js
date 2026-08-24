@@ -7,6 +7,7 @@ import { createStarField } from './scene/starfield.js'
 import { createClassroom } from './scene/classroom.js'
 import { createHourglass, HOURGLASS_RADIUS, HOURGLASS_HALF_HEIGHT } from './scene/hourglass.js'
 import { computeClearOfGlobePosition } from './scene/adaptive-position.js'
+import WORLD_BASEMAP_URL from './textures/world-basemap.webp'
 
 const GLOBE_RADIUS = 4
 const TEXTURE_W = 4096
@@ -49,8 +50,6 @@ const GLOBE_COLOR_LIGHT = new THREE.Color(0xffffff)
 const GLOBE_LIGHT_SKY_COLOR = 0xffffff
 const GLOBE_LIGHT_GROUND_COLOR = 0x808080
 const GLOBE_LIGHT_INTENSITY = 4
-
-const WORLD_BASEMAP_URL = '/textures/world-basemap.webp'
 
 /** Resolves an Image once loaded. */
 function loadImage (path) {

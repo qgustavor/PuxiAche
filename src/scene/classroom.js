@@ -1,3 +1,4 @@
+import BLACKBOARD_URL from '../textures/blackboard.webp'
 import * as THREE from 'three'
 
 const WALL_COLOR = 0xe4d9c4
@@ -10,7 +11,6 @@ const BOARD_W = 32
 const BOARD_H = 12
 const FRAME_T = 0.28
 
-const BLACKBOARD_URL = '/textures/blackboard.webp'
 const BLACKBOARD_BASE_COLOR = 0x1f4d3a // shown before the image loads / if it's missing
 
 // How far the wall/floor travel to fully hide themselves when transitioning to the
