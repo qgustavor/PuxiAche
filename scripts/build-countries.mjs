@@ -9,7 +9,7 @@
 // What it does:
 //   1. Downloads a world country-boundaries GeoJSON (alpha-2 code + ADMIN name).
 //   2. Simplifies each polygon (Douglas-Peucker) to keep bundle size sane.
-//   3. Computes each country's real area (km²) via Turf.
+//   3. Validates polygon winding and computes each country's real area (km²) via Turf.
 //   4. Computes a +500km GEODESIC buffer of each polygon via Turf — this is
 //      the "found within 500km of the border" tolerance from the game
 //      design, and it's why we use Turf here instead of Clipper2: Turf's
@@ -54,6 +54,30 @@ const NAME_LOCALES = ['pt', 'es']
 
 const OUT_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'data')
 
+/**
+ * Validates and normalizes polygon winding order (RFC 7946: CCW for outer rings, CW for holes).
+ * Ensures the feature has a valid, finite area and throws if it doesn't.
+ *
+ * @param {Object} feature - GeoJSON feature to validate
+ * @param {number} areaThresholdKm2 - Minimum valid area in km²
+ * @returns {Object} { geometry: rewound feature, area: area in km² }
+ * @throws {Error} if winding is invalid or area is too small/non-finite
+ */
+function validateAndNormalizeWinding (feature, areaThresholdKm2 = 0.1) {
+  // Enforce RFC 7946: CCW for outer rings, CW for holes (reverse: false)
+  const rewound = turf.rewind(feature, { reverse: false, mutate: false })
+  const area = turf.area(rewound) / 1e6
+
+  if (!Number.isFinite(area)) {
+    throw new Error('non-finite area (invalid winding?)')
+  }
+  if (area < areaThresholdKm2) {
+    throw new Error(`area too small: ${area.toFixed(4)}km²`)
+  }
+
+  return { geometry: rewound, area }
+}
+
 async function main () {
   if (!existsSync(OUT_DIR)) mkdirSync(OUT_DIR, { recursive: true })
 
@@ -89,15 +113,31 @@ async function main () {
     let rep
     let bufferedFeature
     try {
+      // Simplify polygon
       simplified = turf.simplify(feature, { tolerance: SIMPLIFY_TOLERANCE, highQuality: false })
-      simplified = turf.rewind(simplified, { reverse: true, mutate: true })
-      areaKm2 = turf.area(feature) / 1e6
-      if (!Number.isFinite(areaKm2) || areaKm2 < MIN_AREA_KM2) throw new Error('invalid area')
-      rep = turf.pointOnFeature(feature)
+
+      // Validate winding and compute area on simplified geometry
+      const { geometry: validated, area } = validateAndNormalizeWinding(simplified, MIN_AREA_KM2)
+      simplified = validated
+      areaKm2 = area
+
+      // Verify representative point is actually inside the polygon
+      rep = turf.pointOnFeature(simplified)
+      if (!turf.booleanPointInPolygon(rep, simplified)) {
+        throw new Error('representative point not inside polygon')
+      }
+
+      // Create and validate buffer for playable countries
       if (hasRealCode) {
         bufferedFeature = turf.buffer(simplified, BUFFER_KM, { units: 'kilometers' })
         if (!bufferedFeature) throw new Error('buffer returned null')
-        bufferedFeature = turf.rewind(bufferedFeature, { reverse: true, mutate: true })
+
+        // Validate buffered winding and ensure buffer is larger than original
+        const { geometry: validatedBuffer, area: bufferedArea } = validateAndNormalizeWinding(bufferedFeature)
+        if (bufferedArea <= areaKm2) {
+          throw new Error(`buffer area (${bufferedArea.toFixed(2)}km²) not larger than original (${areaKm2.toFixed(2)}km²)`)
+        }
+        bufferedFeature = validatedBuffer
       }
     } catch (err) {
       console.warn(`  skipping ${nameEn} (${rawCode}): ${err.message}`)
