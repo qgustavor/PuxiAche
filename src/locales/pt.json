@@ -1,0 +1,68 @@
+{
+  "app": { "title": "PuxiAche", "tagline": "Encontre o máximo de países em um minuto!" },
+  "menu": { "play": "Jogar", "rankings": "Ranking", "language": "Idioma", "theme": "Tema", "sound": "Som", "info": "Sobre" },
+
+  "info": {
+    "title": "Sobre o PuxiAche",
+    "madeBy": "Feito por",
+    "coauthors": "Com a ajuda de",
+    "builtWith": "Construído com a ajuda (horrível) de",
+    "aiCredit": "Claude e ChatGPT",
+    "repo": "Ver código no GitHub",
+    "reopenTutorial": "Ver tutorial",
+    "close": "Fechar"
+  },
+
+  "tutorial": {
+    "title": "Como jogar!",
+    "steps": [
+      "Puxe para girar o globo e encontre o país indicado.",
+      "Países menores valem mais pontos — quanto menor, maior a pontuação!",
+      "Travou? Só pular e seguir em frente.",
+      "Você tem 60 segundos — boa sorte!"
+    ],
+    "start": "Vamos lá!"
+  },
+
+  "game": {
+    "find": "Encontre",
+    "next": "Próximo",
+    "score": "Pontos",
+    "time": "Tempo",
+    "skip": "Pular",
+    "found": "Você encontrou!",
+    "skipped": "Pulado"
+  },
+
+  "results": {
+    "title": "Tempo esgotado!",
+    "scoreLabel": "Sua pontuação",
+    "foundLabel": "Países encontrados",
+    "skippedLabel": "Países pulados",
+    "namePrompt": "Digite seu nome para o ranking",
+    "namePlaceholder": "Seu nome",
+    "nameHint": "Até 16 caracteres",
+    "nameRejected": "Esse nome não é permitido. Tente outro!",
+    "submit": "Enviar pontuação",
+    "submitted": "Pontuação enviada!",
+    "submitError": "Não foi possível enviar a pontuação. Verifique sua conexão e tente novamente.",
+    "playAgain": "Jogar novamente",
+    "backToMenu": "Voltar ao menu",
+    "highScoreTitle": "RECORDE NOVO!",
+    "personalBest": "Novo recorde pessoal!"
+  },
+
+  "leaderboard": {
+    "title": "Ranking",
+    "empty": "Ainda não há pontuações. Seja o primeiro!",
+    "loading": "Carregando ranking…",
+    "error": "Não foi possível carregar a ranking.",
+    "back": "Voltar",
+    "rank": "#",
+    "name": "Nome",
+    "score": "Pontos",
+    "you": "Você"
+  },
+
+  "common": { "close": "Fechar", "loading": "Carregando…" }
+}

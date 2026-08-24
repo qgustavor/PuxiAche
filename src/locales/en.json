@@ -1,0 +1,68 @@
+{
+  "app": { "title": "PuxiAche", "tagline": "Find as many countries as you can in a minute!" },
+  "menu": { "play": "Play", "rankings": "Rankings", "language": "Language", "theme": "Theme", "sound": "Sound", "info": "About" },
+
+  "info": {
+    "title": "About PuxiAche",
+    "madeBy": "Made by",
+    "coauthors": "With the help of",
+    "builtWith": "Built with the (horrible) help of",
+    "aiCredit": "Claude and ChatGPT",
+    "repo": "View source on GitHub",
+    "reopenTutorial": "Show tutorial",
+    "close": "Close"
+  },
+
+  "tutorial": {
+    "title": "How to play!",
+    "steps": [
+      "Drag to spin the globe and find the named country.",
+      "Smaller countries are worth more points — the smaller, the bigger the score!",
+      "Stuck? Just skip and go on.",
+      "You've got 60 seconds — good luck!"
+    ],
+    "start": "Let's go!"
+  },
+
+  "game": {
+    "find": "Find",
+    "next": "Next",
+    "score": "Score",
+    "time": "Time",
+    "skip": "Skip",
+    "found": "Found!",
+    "skipped": "Skipped"
+  },
+
+  "results": {
+    "title": "Time's up!",
+    "scoreLabel": "Your score",
+    "foundLabel": "Countries found",
+    "skippedLabel": "Countries skipped",
+    "namePrompt": "Enter your name for the leaderboard",
+    "namePlaceholder": "Your name",
+    "nameHint": "Up to 16 characters",
+    "nameRejected": "That name isn't allowed. Try another one!",
+    "submit": "Submit score",
+    "submitted": "Score submitted!",
+    "submitError": "Couldn't submit your score. Check your connection and try again.",
+    "playAgain": "Play again",
+    "backToMenu": "Back to menu",
+    "highScoreTitle": "NEW HIGH SCORE!",
+    "personalBest": "New personal best!"
+  },
+
+  "leaderboard": {
+    "title": "Rankings",
+    "empty": "No scores yet. Be the first!",
+    "loading": "Loading rankings…",
+    "error": "Couldn't load the rankings right now.",
+    "back": "Back",
+    "rank": "#",
+    "name": "Name",
+    "score": "Score",
+    "you": "You"
+  },
+
+  "common": { "close": "Close", "loading": "Loading…" }
+}

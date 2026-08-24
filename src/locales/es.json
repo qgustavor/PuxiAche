@@ -1,0 +1,68 @@
+{
+  "app": { "title": "PuxiAche", "tagline": "¡Encuentra tantos países como puedas en un minuto!" },
+  "menu": { "play": "Jugar", "rankings": "Clasificación", "language": "Idioma", "theme": "Tema", "sound": "Sonido", "info": "Acerca de" },
+
+  "info": {
+    "title": "Acerca de PuxiAche",
+    "madeBy": "Hecho por",
+    "coauthors": "Con la ayuda de",
+    "builtWith": "Construido con la (horrible) ayuda de",
+    "aiCredit": "Claude y ChatGPT",
+    "repo": "Ver código en GitHub",
+    "reopenTutorial": "Ver tutorial",
+    "close": "Cerrar"
+  },
+
+  "tutorial": {
+    "title": "¡Cómo jugar!",
+    "steps": [
+      "Arrastra para girar el globo y encontrar el país indicado.",
+      "Los países pequeños valen más puntos — ¡cuanto más pequeño, más puntos!",
+      "¿Atascado? Simplemente sáltalo y sigue adelante.",
+      "¡Tienes 60 segundos — buena suerte!"
+    ],
+    "start": "¡Vamos!"
+  },
+
+  "game": {
+    "find": "Encuentra",
+    "next": "Siguiente",
+    "score": "Puntos",
+    "time": "Tiempo",
+    "skip": "Saltar",
+    "found": "¡Encontrado!",
+    "skipped": "Saltado"
+  },
+
+  "results": {
+    "title": "¡Se acabó el tiempo!",
+    "scoreLabel": "Tu puntuación",
+    "foundLabel": "Países encontrados",
+    "skippedLabel": "Países saltados",
+    "namePrompt": "Ingresa tu nombre para la clasificación",
+    "namePlaceholder": "Tu nombre",
+    "nameHint": "Hasta 16 caracteres",
+    "nameRejected": "Ese nombre no está permitido. ¡Prueba con otro!",
+    "submit": "Enviar puntuación",
+    "submitted": "¡Puntuación enviada!",
+    "submitError": "No se pudo enviar tu puntuación. Comprueba tu conexión e inténtalo de nuevo.",
+    "playAgain": "Jugar de nuevo",
+    "backToMenu": "Volver al menú",
+    "highScoreTitle": "¡NUEVO RÉCORD!",
+    "personalBest": "¡Nuevo mejor puntaje personal!"
+  },
+
+  "leaderboard": {
+    "title": "Clasificación",
+    "empty": "Aún no hay puntuaciones. ¡Sé el primero!",
+    "loading": "Cargando clasificación…",
+    "error": "No se pudo cargar la clasificación en este momento.",
+    "back": "Volver",
+    "rank": "#",
+    "name": "Nombre",
+    "score": "Puntos",
+    "you": "Tú"
+  },
+
+  "common": { "close": "Cerrar", "loading": "Cargando…" }
+}

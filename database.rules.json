@@ -1,0 +1,41 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "leaderboard": {
+      ".read": true,
+      ".indexOn": ["score", "ts", "gameId"],
+
+      "$entryId": {
+        ".write": "!data.exists() && newData.exists()",
+
+        ".validate": "newData.hasChildren(['name', 'score', 'gameId', 'ts'])",
+
+        "name": {
+          ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 16"
+        },
+        "score": {
+          ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 500000"
+        },
+        "gameId": {
+          ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 64"
+        },
+        "ts": {
+          ".validate": "newData.isNumber() && newData.val() <= now + 60000"
+        },
+        "$other": {
+          ".validate": false
+        }
+      }
+    },
+
+    "auditEvents": {
+      "$gameId": {
+        ".read": false,
+        ".write": "!data.exists() && newData.exists()",
+        ".validate": "newData.isString() && newData.val().length > 1 && newData.val().length <= 20000"
+      }
+    }
+  }
+}
