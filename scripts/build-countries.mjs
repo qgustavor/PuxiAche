@@ -1,13 +1,11 @@
 #!/usr/bin/env bun
-// Run this yourself, locally: `bun run scripts/build-countries.mjs`
+// Run this yourself, locally: `bun run build:countries`
 //
-// This needs network access (it fetches a public GeoJSON dataset) — it is
-// NOT run as part of `npm install` or `npm run build`, on purpose, so the
-// project stays buildable offline with the (less accurate) fallback data
-// that ships in src/data/countries.js.
+// This processes a cached source GeoJSON file (src/data/countries.source.geojson)
+// to generate the boundary data used by the game.
 //
 // What it does:
-//   1. Downloads a world country-boundaries GeoJSON (alpha-2 code + ADMIN name).
+//   1. Reads cached country-boundaries GeoJSON (alpha-2 code + ADMIN name).
 //   2. Simplifies each polygon (Douglas-Peucker) to keep bundle size sane.
 //   3. Validates polygon winding and computes each country's real area (km²) via Turf.
 //   4. Computes a +500km GEODESIC buffer of each polygon via Turf — this is
@@ -26,17 +24,15 @@
 //      countries.meta.json. The app auto-detects these and switches from
 //      circle-approximation mode to real boundary+buffer mode.
 //
-// Tune SIMPLIFY_TOLERANCE if the resulting files are too big/small, or
-// swap SOURCE_URL for a different dataset (Natural Earth 50m/110m, etc.) —
-// just check the property names line up with CODE_PROP / NAME_PROP below.
+// Tune SIMPLIFY_TOLERANCE if the resulting files are too big/small.
+// To update the source data, run: bun run update:countries
 
-import { writeFileSync, existsSync, mkdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import * as turf from '@turf/turf'
 import { getCountryNames } from './country-names.mjs'
 
-const SOURCE_URL = 'https://raw.githubusercontent.com/datasets/geo-countries/main/data/countries.geojson'
 // The country-code convention used everywhere in this project: boundary/buffer features,
 // countries.meta.json, and game logic all key off alpha-2 codes, and Intl.DisplayNames
 // (scripts/country-names.mjs) takes alpha-2 codes directly.
@@ -53,6 +49,7 @@ const MIN_AREA_KM2 = 1 // drop slivers/invalid features
 const NAME_LOCALES = ['pt', 'es']
 
 const OUT_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'data')
+const SOURCE_PATH = path.join(OUT_DIR, 'countries.source.geojson')
 
 /**
  * Validates and normalizes polygon winding order (RFC 7946: CCW for outer rings, CW for holes).
@@ -81,16 +78,16 @@ function validateAndNormalizeWinding (feature, areaThresholdKm2 = 0.1) {
 async function main () {
   if (!existsSync(OUT_DIR)) mkdirSync(OUT_DIR, { recursive: true })
 
-  console.log(`Fetching ${SOURCE_URL} ...`)
-  const res = await fetch(SOURCE_URL)
-  if (!res.ok) {
+  if (!existsSync(SOURCE_PATH)) {
     throw new Error(
-      `Failed to fetch source dataset (HTTP ${res.status}). ` +
-        'You can also download a GeoJSON yourself and point SOURCE_URL at a local file:// URL.'
+      `Source data not found at ${SOURCE_PATH}\n` +
+        'Run `bun run update:countries` to fetch and cache the source GeoJSON.'
     )
   }
-  const raw = await res.json()
-  console.log(`Fetched ${raw.features.length} raw features. Processing...`)
+
+  console.log(`Reading ${SOURCE_PATH} ...`)
+  const raw = JSON.parse(readFileSync(SOURCE_PATH, 'utf-8'))
+  console.log(`Loaded ${raw.features.length} raw features. Processing...`)
 
   const boundaries = { type: 'FeatureCollection', features: [] }
   const buffered = { type: 'FeatureCollection', features: [] }
