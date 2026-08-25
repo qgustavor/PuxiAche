@@ -89,7 +89,7 @@ const COAUTHORS = [
   { name: 'Professor Wagner', url: 'https://ursal.zone/@wag' },
   { name: 'GeoJogos', url: 'https://play.google.com/store/apps/details?id=br.com.geojogos' }
 ]
-const REPO_URL = 'https://github.com/qgustavor/swipe-the-globe'
+const REPO_URL = 'https://github.com/qgustavor/PuxiAche'
 
 defineEmits(['close', 'open-tutorial'])
 </script>
