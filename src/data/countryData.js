@@ -26,14 +26,6 @@ export function getBoundaryFeature (code) {
 
 /**
  * Returns true if the given lat/lon falls inside the country's +500km buffered boundary.
- *
- * Countries that hug the antimeridian (Fiji, Kiribati, NZ, Russia, ...) end up with a
- * buffered ring whose raw longitudes span from ~-180 to ~180 — that's a correct shape on
- * the sphere, but a *planar* point-in-polygon test (like @turf/boolean-point-in-polygon,
- * which treats longitude as a flat x-axis) misreads that ring as covering nearly the whole
- * globe, so far-away points (e.g. Brazil) could wrongly test "inside" a Pacific country's
- * buffer. d3-geo's geoContains does the containment check in true spherical space (great
- * circles, not flat lon/lat), so it handles the antimeridian correctly.
  */
 export function isPointOnCountry (country, lat, lon) {
   const buffered = bufferedByCode.get(country.code)

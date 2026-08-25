@@ -37,22 +37,14 @@ export function isSpecialCountry (country) {
   return country.area < SMALL_COUNTRY_AREA_KM2
 }
 
-let _q1AreaCache = null
-/** First-quartile country area (km²) across the whole playable list, memoized. */
-function firstQuartileArea (list) {
-  if (_q1AreaCache != null) return _q1AreaCache
-  const areas = list.map((c) => c.area).slice().sort((a, b) => a - b)
-  const idx = (areas.length - 1) * 0.25
-  const lo = Math.floor(idx)
-  const hi = Math.ceil(idx)
-  _q1AreaCache = lo === hi ? areas[lo] : areas[lo] + (areas[hi] - areas[lo]) * (idx - lo)
-  return _q1AreaCache
-}
+const MINIMAL_AREA_AT_START = 300000
 
 let _areaBoundsCache = null
 function areaBounds (list) {
   if (_areaBoundsCache) return _areaBoundsCache
-  const areas = list.map((c) => c.area)
+  // Prevent areas from being <= 0 (e.g. from micro-states rounding down to 0 km²) 
+  // to prevent Math.log(0) resulting in -Infinity/NaN further down.
+  const areas = list.map((c) => Math.max(1, c.area || 1))
   _areaBoundsCache = { min: Math.min(...areas), max: Math.max(...areas) }
   return _areaBoundsCache
 }
@@ -70,7 +62,11 @@ function areaBounds (list) {
 export function pointsForCountry (country) {
   const { min, max } = areaBounds(COUNTRY_LIST)
   if (min === max) return MAX_POINTS
-  const clamped = Math.min(Math.max(country.area, min), max)
+  
+  // Clamp the target country's area to at least 1, mirroring areaBounds
+  const safeArea = Math.max(1, country.area || 1)
+  const clamped = Math.min(Math.max(safeArea, min), max)
+  
   const t = (Math.log(clamped) - Math.log(min)) / (Math.log(max) - Math.log(min))
   const raw = MAX_POINTS - t * (MAX_POINTS - MIN_POINTS)
   return Math.round(raw / POINTS_STEP) * POINTS_STEP
@@ -78,13 +74,12 @@ export function pointsForCountry (country) {
 
 /**
  * Minimum country area allowed for the given (0-based) round index. Interpolates linearly
- * from the dataset's first quartile at round 1 down to zero (no restriction) at round
+ * from MINIMAL_AREA_AT_START at round 1 down to zero (no restriction) at round
  * DIFFICULTY_RAMP_ROUNDS, and stays at zero afterwards — see DIFFICULTY_RAMP_ROUNDS above.
  */
 function minAreaForRound (roundIndex) {
-  const q1 = firstQuartileArea(COUNTRY_LIST)
   const t = Math.min(Math.max(roundIndex, 0), DIFFICULTY_RAMP_ROUNDS - 1) / (DIFFICULTY_RAMP_ROUNDS - 1)
-  return q1 * (1 - t)
+  return MINIMAL_AREA_AT_START * (1 - t)
 }
 
 /** Reads (or creates and persists) this player's local seed. */
