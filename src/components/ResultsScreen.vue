@@ -38,7 +38,27 @@
           {{ $t('results.skippedLabel') }}: {{ summary?.skippedCount ?? 0 }}
         </div>
 
-        <div class="name-entry">
+        <p
+          v-if="summary && summary.skippedCount <= 2"
+          class="results-skip-hint"
+        >
+          <Lightbulb :size="16" :stroke-width="2.5" aria-hidden="true" />
+          <span>{{ $t('results.skipHint') }}</span>
+        </p>
+
+        <div
+          v-if="!isOnline"
+          class="results-skip-hint"
+          style="justify-content: center; margin-top: 1.5rem; opacity: 0.8;"
+        >
+          <WifiOff :size="16" :stroke-width="2.5" aria-hidden="true" />
+          <span>Offline</span>
+        </div>
+
+        <div
+          v-else
+          class="name-entry"
+        >
           <label for="player-name">{{ $t('results.namePrompt') }}</label>
           <input
             id="player-name"
@@ -92,49 +112,51 @@
           <Trophy :size="18" :stroke-width="2" aria-hidden="true" /> {{ $t('results.personalBest') }}
         </p>
 
-        <h2 class="results-postsubmit-title">
-          {{ $t('leaderboard.title') }}
-        </h2>
-        <div id="results-leaderboard-body">
-          <p v-if="postSubmitStatus === 'loading'">
-            {{ $t('leaderboard.loading') }}
-          </p>
-          <p v-else-if="postSubmitStatus === 'error'">
-            {{ $t('leaderboard.error') }}
-          </p>
-          <p v-else-if="postSubmitStatus === 'empty'">
-            {{ $t('leaderboard.empty') }}
-          </p>
-          <div v-else>
-            <div
-              v-for="(row, i) in postSubmitRows"
-              :key="row.id"
-              class="lb-row"
-              :class="{ 'lb-row-you': row.id === youEntryId }"
-            >
-              <span class="lb-rank">{{ i + 1 }}</span>
-              <span class="lb-name">{{ row.name }}<span
-                v-if="row.id === youEntryId"
-                class="lb-you-tag"
-              >{{ $t('leaderboard.you') }}</span></span>
-              <span class="lb-score">{{ row.score }}</span>
-            </div>
-
-            <template v-if="youRank && !youInPostSubmitRows">
+        <template v-if="isOnline">
+          <h2 class="results-postsubmit-title">
+            {{ $t('leaderboard.title') }}
+          </h2>
+          <div id="results-leaderboard-body">
+            <p v-if="postSubmitStatus === 'loading'">
+              {{ $t('leaderboard.loading') }}
+            </p>
+            <p v-else-if="postSubmitStatus === 'error'">
+              {{ $t('leaderboard.error') }}
+            </p>
+            <p v-else-if="postSubmitStatus === 'empty'">
+              {{ $t('leaderboard.empty') }}
+            </p>
+            <div v-else>
               <div
-                class="lb-ellipsis"
-                aria-hidden="true"
+                v-for="(row, i) in postSubmitRows"
+                :key="row.id"
+                class="lb-row"
+                :class="{ 'lb-row-you': row.id === youEntryId }"
               >
-                ···
+                <span class="lb-rank">{{ i + 1 }}</span>
+                <span class="lb-name">{{ row.name }}<span
+                  v-if="row.id === youEntryId"
+                  class="lb-you-tag"
+                >{{ $t('leaderboard.you') }}</span></span>
+                <span class="lb-score">{{ row.score }}</span>
               </div>
-              <div class="lb-row lb-row-you">
-                <span class="lb-rank">{{ youRank }}</span>
-                <span class="lb-name">{{ name }}<span class="lb-you-tag">{{ $t('leaderboard.you') }}</span></span>
-                <span class="lb-score">{{ summary?.score ?? 0 }}</span>
-              </div>
-            </template>
+
+              <template v-if="youRank && !youInPostSubmitRows">
+                <div
+                  class="lb-ellipsis"
+                  aria-hidden="true"
+                >
+                  ···
+                </div>
+                <div class="lb-row lb-row-you">
+                  <span class="lb-rank">{{ youRank }}</span>
+                  <span class="lb-name">{{ name }}<span class="lb-you-tag">{{ $t('leaderboard.you') }}</span></span>
+                  <span class="lb-score">{{ summary?.score ?? 0 }}</span>
+                </div>
+              </template>
+            </div>
           </div>
-        </div>
+        </template>
       </template>
 
       <div class="results-actions">
@@ -160,11 +182,12 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { useOnline } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { animate, utils } from 'animejs'
 import { isNameBlocked, isNameShapeValid, MAX_NAME_LENGTH } from '../blacklist.js'
 import confetti from 'canvas-confetti'
-import { Trophy } from 'lucide-vue-next'
+import { Trophy, Lightbulb, WifiOff } from 'lucide-vue-next'
 
 const props = defineProps({
   summary: { type: Object, default: null },
@@ -179,6 +202,9 @@ const props = defineProps({
 const emit = defineEmits(['play-again', 'back-to-menu', 'submit'])
 
 const { t } = useI18n()
+
+// ---------- Online/Offline Tracking ----------
+const isOnline = useOnline()
 
 // Remembers the last name the player entered, so they don't have to retype it every game.
 const NAME_KEY = 'gd_playerName'

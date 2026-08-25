@@ -96,7 +96,7 @@ import ResultsScreen from './components/ResultsScreen.vue'
 import LeaderboardScreen from './components/LeaderboardScreen.vue'
 import TutorialModal from './components/TutorialModal.vue'
 import InfoModal from './components/InfoModal.vue'
-import { GameSession, GAME_DURATION_MS, isSpecialCountry } from './game.js'
+import { GameSession, GAME_DURATION_MS, isSpecialCountry, loadGameData } from './game.js'
 import { i18n } from './i18n.js'
 import { initFirebase, submitScore, fetchTopScores, fetchScoreRank } from './firebase.js'
 import { setSoundEnabled, playSound, playRoundWin } from './audio.js'
@@ -149,17 +149,17 @@ const infoOpen = ref(false)
 // Players can re-open it any time from the info modal instead.
 const tutorialSkipped = useStorage('gd_skipTutorial', false)
 
-function handlePlayClick () {
+async function handlePlayClick () {
   if (tutorialSkipped.value) {
-    beginGame()
+    await beginGame()
   } else {
     tutorialOpen.value = true
   }
 }
-function handleTutorialStart () {
+async function handleTutorialStart () {
   tutorialSkipped.value = true
   tutorialOpen.value = false
-  beginGame()
+  await beginGame()
 }
 function handleReopenTutorial () {
   infoOpen.value = false
@@ -189,7 +189,10 @@ function countryName (country) {
   return country[i18n.global.locale.value] || country.en
 }
 
-function beginGame () {
+async function beginGame () {
+  // Download/parse the heavy country boundary data right before transitioning
+  await loadGameData()
+
   screen.value = 'game'
   globeRef.value?.setMode({ interactive: true, autoRotateRpm: 0 })
   hud.score = 0

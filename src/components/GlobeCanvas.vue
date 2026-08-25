@@ -10,7 +10,6 @@
 import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useEventListener } from '@vueuse/core'
 import { Globe } from '../globe.js'
-import { COUNTRY_LIST } from '../data/countryData.js'
 
 const props = defineProps({
   theme: { type: String, default: 'dark' },
@@ -20,7 +19,7 @@ const containerEl = ref(null)
 let globe = null
 
 onMounted(() => {
-  globe = new Globe(containerEl.value, COUNTRY_LIST, props.theme)
+  globe = new Globe(containerEl.value, props.theme)
   globe.setMode({ interactive: false, autoRotateRpm: 1 }) // idle title-screen spin
   globe.start()
 })

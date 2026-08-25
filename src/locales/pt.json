@@ -7,7 +7,7 @@
     "madeBy": "Feito por",
     "coauthors": "Com a ajuda de",
     "builtWith": "Construído com a ajuda (horrível) de",
-    "aiCredit": "Claude e ChatGPT",
+    "aiCredit": "Claude, ChatGPT e Gemini",
     "repo": "Ver código no GitHub",
     "reopenTutorial": "Ver tutorial",
     "close": "Fechar"
@@ -49,7 +49,8 @@
     "playAgain": "Jogar novamente",
     "backToMenu": "Voltar ao menu",
     "highScoreTitle": "RECORDE NOVO!",
-    "personalBest": "Novo recorde pessoal!"
+    "personalBest": "Novo recorde pessoal!",
+    "skipHint": "Ei, não tem problema nenhum pular países!"
   },
 
   "leaderboard": {

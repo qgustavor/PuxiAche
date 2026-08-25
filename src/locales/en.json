@@ -7,7 +7,7 @@
     "madeBy": "Made by",
     "coauthors": "With the help of",
     "builtWith": "Built with the (horrible) help of",
-    "aiCredit": "Claude and ChatGPT",
+    "aiCredit": "Claude, ChatGPT and Gemini",
     "repo": "View source on GitHub",
     "reopenTutorial": "Show tutorial",
     "close": "Close"
@@ -49,7 +49,8 @@
     "playAgain": "Play again",
     "backToMenu": "Back to menu",
     "highScoreTitle": "NEW HIGH SCORE!",
-    "personalBest": "New personal best!"
+    "personalBest": "New personal best!",
+    "skipHint": "Hey, it does not hurt skipping countries!"
   },
 
   "leaderboard": {

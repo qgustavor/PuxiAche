@@ -28,6 +28,7 @@
           class="btn btn-secondary"
           type="button"
           @click="$emit('rankings')"
+          :disabled="!isOnline"
         >
           {{ $t('menu.rankings') }}
         </button>
@@ -37,6 +38,10 @@
 </template>
 
 <script setup>
+import { useOnline } from '@vueuse/core'
+
+const isOnline = useOnline()
+
 defineEmits(['play', 'rankings'])
 
 // "PuxiAche" is a portmanteau of "Puxe" (pull/drag) and "Ache" (find) — each half gets its

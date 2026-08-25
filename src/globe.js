@@ -1,7 +1,6 @@
 import * as THREE from 'three'
 import { geoPath, geoEquirectangular } from 'd3-geo'
 import { latLonToVector3, vector3ToLatLon } from './geo.js'
-import { ALL_BOUNDARY_FEATURES } from './data/countryData.js'
 import { buildShadowTexture } from './scene/shadow-texture.js'
 import { createStarField } from './scene/starfield.js'
 import { createClassroom } from './scene/classroom.js'
@@ -109,9 +108,8 @@ function paintGlobeCanvas (ctx, boundaryFeatures, baseImage) {
 }
 
 export class Globe {
-  constructor (container, countries, initialTheme = 'dark') {
+  constructor (container, initialTheme = 'dark') {
     this.container = container
-    this.countries = countries
     this.interactive = false
     this.autoRotateSpeed = 0 // rad/s
     this.markers = []
@@ -145,6 +143,16 @@ export class Globe {
 
     this._qYaw = new THREE.Quaternion()
     this._qPitch = new THREE.Quaternion()
+
+    // Pointer, pinch, and tap-to-center states
+    this._pointers = new Map()
+    this._pinchStartDist = 0
+    this._zoomStart = 1
+    this._zoom = 1
+    this._zoomTarget = 1
+    this._panTarget = null
+    this._pointerDownPos = null
+    this._pointerDownTime = 0
 
     // keyboard state
     this._keys = {} // code -> holdStart timestamp
@@ -188,12 +196,26 @@ export class Globe {
     this._globeColorTarget = (this.theme === 'dark' ? GLOBE_COLOR_DARK : GLOBE_COLOR_LIGHT).clone()
 
     getWorldBasemapImage()
-      .then((img) => {
+      .then(async (img) => {
         if (this._disposed) return
         const canvas = document.createElement('canvas')
         canvas.width = TEXTURE_W
         canvas.height = TEXTURE_H
-        paintGlobeCanvas(canvas.getContext('2d'), ALL_BOUNDARY_FEATURES, img)
+
+        // Debug hit shapes mode injection check
+        const debugHits = import.meta.env && import.meta.env.VITE_DEBUG_HIT_SHAPES === 'true'
+        let featuresToDraw
+        if (debugHits) {
+          const mod = await import('./data/countries.buffered.geo.json')
+          featuresToDraw = mod.default?.features || mod.features
+        } else {
+          const mod = await import('./data/countryData.js')
+          featuresToDraw = mod.ALL_BOUNDARY_FEATURES
+        }
+
+        if (this._disposed) return
+
+        paintGlobeCanvas(canvas.getContext('2d'), featuresToDraw, img)
 
         const texture = new THREE.CanvasTexture(canvas)
         if ('colorSpace' in texture) texture.colorSpace = THREE.SRGBColorSpace
@@ -260,7 +282,6 @@ export class Globe {
 
   _darkOpacity () { return 1 - this._envMix }
 
-  
   /** Recomputes where the hourglass should sit when shown, based on the current camera
    * distance (see scene/adaptive-position.js). Call after any camera-distance change. */
   _updateHourglassShownPosition () {
@@ -295,22 +316,88 @@ export class Globe {
     this.camera.position.z = distance * 1.2
   }
 
+  _getPinchDist () {
+    const pts = Array.from(this._pointers.values())
+    if (pts.length < 2) return 0
+    return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y)
+  }
+
+  _handleTap (clientX, clientY) {
+    const rect = this.canvasEl.getBoundingClientRect()
+    // Calculate normalized device coordinates
+    const x = ((clientX - rect.left) / rect.width) * 2 - 1
+    const y = -((clientY - rect.top) / rect.height) * 2 + 1
+
+    const raycaster = new THREE.Raycaster()
+    raycaster.setFromCamera({ x, y }, this.camera)
+
+    const intersects = raycaster.intersectObject(this.sphere)
+    if (intersects.length > 0) {
+      this.velocity = { x: 0, y: 0 } // Stop any existing inertia
+      
+      const localPoint = this.globeGroup.worldToLocal(intersects[0].point.clone())
+      const { lat, lon } = vector3ToLatLon(localPoint, GLOBE_RADIUS)
+      
+      const targetPitch = THREE.MathUtils.clamp(lat * (Math.PI / 180), -MAX_PITCH, MAX_PITCH)
+      const targetYaw = -(lon + 90) * (Math.PI / 180)
+      
+      const currentYaw = this.yaw
+      const diff = (targetYaw - currentYaw) % (Math.PI * 2)
+      let shortestDiff = diff
+      // Evaluate shortest rotational path to prevent full 360-degree unwraps
+      if (shortestDiff > Math.PI) shortestDiff -= Math.PI * 2
+      if (shortestDiff < -Math.PI) shortestDiff += Math.PI * 2
+      
+      this._panTarget = {
+        yaw: currentYaw + shortestDiff,
+        pitch: targetPitch
+      }
+    }
+  }
+
   _bindEvents () {
     const el = this.canvasEl
 
     this._onPointerDown = (e) => {
       if (!this.interactive) return
 
-      this.dragging = true
-      this.velocity = { x: 0, y: 0 }
-      this._lastPointer = { x: e.clientX, y: e.clientY }
-      this._lastMoveT = performance.now()
+      this._pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+
+      if (this._pointers.size === 1) {
+        this.dragging = true
+        this.velocity = { x: 0, y: 0 }
+        this._lastPointer = { x: e.clientX, y: e.clientY }
+        this._lastMoveT = performance.now()
+
+        this._pointerDownPos = { x: e.clientX, y: e.clientY }
+        this._pointerDownTime = performance.now()
+      } else if (this._pointers.size === 2) {
+        this.dragging = false
+        this._pinchStartDist = this._getPinchDist()
+        this._zoomStart = this._zoomTarget
+      }
+
+      this._panTarget = null // Always interrupt center-panning upon interaction
 
       el.setPointerCapture?.(e.pointerId)
     }
 
     this._onPointerMove = (e) => {
-      if (!this.interactive || !this.dragging || !this._lastPointer) return
+      if (!this.interactive) return
+
+      if (this._pointers.has(e.pointerId)) {
+        this._pointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      }
+
+      // Handle Pinch to Zoom
+      if (this._pointers.size === 2) {
+        const dist = this._getPinchDist()
+        const scale = dist / this._pinchStartDist
+        this._zoomTarget = THREE.MathUtils.clamp(this._zoomStart * scale, 1, 2)
+        return
+      }
+
+      if (!this.dragging || !this._lastPointer) return
 
       const now = performance.now()
       const dt = Math.max(1, now - this._lastMoveT) / 1000
@@ -323,28 +410,54 @@ export class Globe {
       this.velocity.x = dx / dt
       this.velocity.y = dy / dt
 
-      this._lastPointer = {
-        x: e.clientX,
-        y: e.clientY,
-      }
+      this._lastPointer = { x: e.clientX, y: e.clientY }
       this._lastMoveT = now
     }
 
     this._onPointerUp = (e) => {
       if (!this.interactive) return
 
-      this.dragging = false
-      this._lastPointer = null
+      this._pointers.delete(e.pointerId)
+
+      // Treat as quick-tap if short time distance
+      if (this._pointerDownPos && this._pointers.size === 0) {
+        const dist = Math.hypot(e.clientX - this._pointerDownPos.x, e.clientY - this._pointerDownPos.y)
+        const time = performance.now() - this._pointerDownTime
+        if (dist < 10 && time < 400) {
+          this._handleTap(e.clientX, e.clientY)
+        }
+      }
+
+      if (this._pointers.size === 0) {
+        this.dragging = false
+        this._lastPointer = null
+        this._pointerDownPos = null
+      } else if (this._pointers.size === 1) {
+        // Safe fail-back to normal dragging if one finger is released during a pinch
+        const remaining = Array.from(this._pointers.values())[0]
+        this.dragging = true
+        this._lastPointer = { x: remaining.x, y: remaining.y }
+        this._lastMoveT = performance.now()
+      }
 
       if (el.hasPointerCapture?.(e.pointerId)) {
         el.releasePointerCapture(e.pointerId)
       }
     }
 
+    this._onWheel = (e) => {
+      if (!this.interactive) return
+      e.preventDefault()
+      const zoomDelta = e.deltaY * -0.002
+      this._zoomTarget = THREE.MathUtils.clamp(this._zoomTarget + zoomDelta, 1, 2)
+      this._panTarget = null
+    }
+
     el.addEventListener('pointerdown', this._onPointerDown)
     el.addEventListener('pointermove', this._onPointerMove)
     el.addEventListener('pointerup', this._onPointerUp)
     el.addEventListener('pointercancel', this._onPointerUp)
+    el.addEventListener('wheel', this._onWheel, { passive: false })
 
     this._onKeyDown = (e) => {
       if (!this.interactive) return
@@ -387,14 +500,23 @@ export class Globe {
   setMode ({ interactive, autoRotateRpm = 0 }) {
     // Leaving interactive (gameplay) mode: ease the tilt the player left the globe at
     // back to its default. Re-entering interactive mode cancels any return in progress.
-    if (this.interactive && !interactive) this._returningTilt = true
-    else if (interactive) this._returningTilt = false
+    if (this.interactive && !interactive) {
+      this._returningTilt = true
+      this._zoomTarget = 1
+    } else if (interactive) {
+      this._returningTilt = false
+      this._zoomTarget = 1
+    }
 
     this.interactive = interactive
     this.autoRotateSpeed = (autoRotateRpm * 2 * Math.PI) / 60 // rpm -> rad/s
     this.dragging = false
     this.velocity = { x: 0, y: 0 }
     this._keys = {}
+    
+    // clear interactions inputs out completely during a mode swap
+    this._pointers.clear()
+    this._panTarget = null
   }
 
   /** Updates the countdown visuals (comet in dark mode, hourglass in light mode).
@@ -542,12 +664,39 @@ export class Globe {
     if (this.autoRotateSpeed !== 0) {
       this._rotateWorld(this.autoRotateSpeed * dt, 0)
     }
+
     if (this.interactive) {
       this._updateKeyboard(dt, now)
       this._updateInertia(dt)
     } else if (this._returningTilt) {
       this._updateTiltReturn(dt)
     }
+
+    // Hande target centering panning
+    if (this._panTarget) {
+      const ease = 1 - Math.pow(0.01, dt) // ~99% approach every second
+      const dy = (this._panTarget.yaw - this.yaw) * ease
+      const dp = (this._panTarget.pitch - this.pitch) * ease
+      this._rotateWorld(dy, dp)
+
+      if (Math.abs(this._panTarget.yaw - this.yaw) < 0.001 && Math.abs(this._panTarget.pitch - this.pitch) < 0.001) {
+        this._panTarget = null
+      }
+    }
+
+    // Handle zoom transitions
+    if (this._zoom !== this._zoomTarget) {
+      const ease = 1 - Math.pow(0.0001, dt) // Fast easing rate for zooms
+      this._zoom += (this._zoomTarget - this._zoom) * ease
+      
+      if (Math.abs(this._zoom - this._zoomTarget) < 0.001) {
+        this._zoom = this._zoomTarget
+      }
+      
+      this.camera.zoom = this._zoom
+      this.camera.updateProjectionMatrix()
+    }
+
     this._updateMarkers(now)
     this._updateThemeTransition(dt)
     this.starfield.update(now)
@@ -576,6 +725,7 @@ export class Globe {
     el.removeEventListener('pointermove', this._onPointerMove)
     el.removeEventListener('pointerup', this._onPointerUp)
     el.removeEventListener('pointercancel', this._onPointerUp)
+    el.removeEventListener('wheel', this._onWheel)
     window.removeEventListener('keydown', this._onKeyDown)
     window.removeEventListener('keyup', this._onKeyUp)
     window.removeEventListener('resize', this._onResize)

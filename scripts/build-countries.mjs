@@ -2,24 +2,13 @@
 // This processes a cached source GeoJSON file (src/data/countries.source.geojson)
 // to generate the boundary data used by the game.
 //
-// What it does:
-//   1. Reads cached country-boundaries GeoJSON (alpha-2 code + ADMIN name).
-//   2. Simplifies each polygon (Douglas-Peucker) to keep bundle size sane (skipped for micro-states).
-//   3. Repairs simplification artifacts (self-intersecting bow-ties) via buffer(0) 
-//      and drops microscopic islands while strictly preserving the primary landmass.
-//   4. Enforces d3-geo winding (CLOCKWISE exterior rings) and explicitly discards 
-//      any corrupted sub-polygons that d3-geo interprets as inverted (globe-spanning).
-//   5. Scales country operations by size:
-//      - Big countries (>= 200,000 km²): Skip the buffer, keeping game logic cheap.
-//      - Medium countries: Remove polygon holes, then compute a +500km GEODESIC buffer.
-//      - Small countries (< 10,000 km²): Replaced with a simple circle (500km diameter).
-//   6. Picks one representative point per country (guaranteed to sit inside
-//      the polygon) for the "next country" distance-pacing rule.
-//   7. Writes src/data/countries.geo.json, countries.buffered.geo.json and
-//      countries.meta.json. The app auto-detects these and switches from
-//      circle-approximation mode to real boundary+buffer mode.
+// Reads a raw country-boundaries GeoJSON and produces three files under
+// src/data/: simplified visual boundaries (countries.geo.json), a buffered
+// "hit-box" version used for click/tap detection (countries.buffered.geo.json),
+// and per-country metadata like name translations and area (countries.meta.json).
+// Geometry is validated against d3-geo along the way, since a corrupted or
+// inverted polygon would make the wrong parts of the globe clickable in-game.
 //
-// Tune SIMPLIFY_TOLERANCE if the resulting files are too big/small.
 // To update the source data, run: bun run update:countries
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
@@ -29,35 +18,37 @@ import * as turf from '@turf/turf'
 import { getCountryNames } from './country-names.mjs'
 import { geoContains } from 'd3-geo'
 
-// Point Nemo, the oceanic pole of inaccessibility.
-// Used strictly as a failsafe to detect inverted spherical polygons that would 
-// cause "everywhere is clickable" bugs in-game.
-const KNOWN_EMPTY_POINT = [-123.393, -48.876] // [lon, lat] for d3-geo
+const KNOWN_EMPTY_POINT = [-123.393, -48.876] // [lon, lat] Point Nemo
 
-// The country-code convention used everywhere in this project
 const CODE_PROP = 'ISO3166-1-Alpha-2'
 const NAME_PROP = 'name'
-const SIMPLIFY_TOLERANCE = 0.03 // degrees
+const SIMPLIFY_TOLERANCE = 0.08 // degrees
+
+// Game Design parameters
 const BUFFER_KM = 500
+const SMALL_COUNTRY_AREA = 1000 // < 1,000 km²: approximate to circle
+const SMALL_COUNTRY_RADIUS_KM = 500
+const CIRCLE_STEPS = 48
 
-const MIN_AREA_KM2 = 0.1 // drop slivers, but allow micro-states like Vatican (~0.01 km²)
-const SKIP_SIMPLIFY_AREA_KM2 = 50 // Skip simplify for tiny nations so we don't erase them
+// Filters out tiny uninhabited archipelago rocks (<50 km²) so they don't spawn
+// stray 500km bubbles in the deep ocean. Micro-states are always preserved.
+const MIN_AREA_KM2 = 50 
+const SKIP_SIMPLIFY_AREA_KM2 = 50
 
-// Country gameplay bounds
-const BIG_COUNTRY_AREA = 400000
-const SMALL_COUNTRY_AREA = 10000
-const SMALL_COUNTRY_RADIUS_KM = 250 // 500km diameter
-
-// Locales to generate country-name translations for.
 const NAME_LOCALES = ['pt', 'es']
 
 const OUT_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'data')
 const SOURCE_PATH = path.join(OUT_DIR, 'countries.source.geojson')
 
-/**
- * Removes holes from a Polygon or MultiPolygon by keeping only the outer ring
- * of each polygon. This avoids math errors when buffering complex shapes.
- */
+function truncateCoordinates (feature, precision = 3) {
+  const factor = 10 ** precision
+  turf.coordEach(feature, (coord) => {
+    coord[0] = Math.round(coord[0] * factor) / factor
+    coord[1] = Math.round(coord[1] * factor) / factor
+  })
+  return feature
+}
+
 function removeHoles (feature) {
   const clone = JSON.parse(JSON.stringify(feature))
   const geom = clone.geometry || clone
@@ -72,10 +63,244 @@ function removeHoles (feature) {
 }
 
 /**
- * Re-validates the coordinate structure of a geometry. 
- * Safely filters out collapsed rings and polygons smaller than minAreaKm2.
- * ALWAYS preserves the largest polygon to ensure micro-states are never deleted.
+ * Rotates every coordinate's longitude by 180 degrees, mapping [-180, 180]
+ * onto itself. For a country whose landmass straddles the antimeridian, this
+ * moves its seam to longitude 0 — an ordinary value with no wraparound —
+ * so it can be buffered and later split with a plain bounding-box clip
+ * instead of one that has to reason about the [-180, 180] wraparound.
  */
+function rotateLongitude180 (feature) {
+  const clone = JSON.parse(JSON.stringify(feature))
+  turf.coordEach(clone, c => {
+    c[0] = c[0] > 0 ? c[0] - 180 : c[0] + 180
+  })
+  return clone
+}
+
+/**
+ * Undoes rotateLongitude180 on a buffered, rotated shape: splits it at
+ * longitude 0 (its seam in the rotated frame) and rotates each half back,
+ * producing valid standard GeoJSON where the seam sits at ±180 again.
+ */
+function unrotateAndSplit (feature) {
+  let west = null
+  let east = null
+  try { west = turf.bboxClip(feature, [-180, -90, 0, 90]) } catch (e) {}
+  try { east = turf.bboxClip(feature, [0, -90, 180, 90]) } catch (e) {}
+
+  const polys = []
+  // Each piece's clip boundary sits exactly at rotated longitude 0, which
+  // belongs to both pieces at once. Shifting by sign (as rotateLongitude180
+  // does) is ambiguous there — the west clip's boundary correctly needs +180,
+  // but the east clip's own boundary needs -180, and a sign check on the
+  // coordinate alone can't tell those apart. Since we already know which
+  // clip produced which piece, shift each one unconditionally instead.
+  const collect = (clipped, shiftDeg) => {
+    if (!clipped || !clipped.geometry) return
+    const shifted = JSON.parse(JSON.stringify(clipped))
+    turf.coordEach(shifted, c => { c[0] += shiftDeg })
+    const ringSets = shifted.geometry.type === 'Polygon'
+      ? [shifted.geometry.coordinates]
+      : shifted.geometry.type === 'MultiPolygon'
+        ? shifted.geometry.coordinates
+        : []
+    for (const rings of ringSets) {
+      if (rings[0] && rings[0].length >= 4) polys.push(rings)
+    }
+  }
+  collect(west, 180)
+  collect(east, -180)
+
+  if (polys.length === 0) return null
+
+  const result = JSON.parse(JSON.stringify(feature))
+  if (polys.length === 1) {
+    result.geometry.type = 'Polygon'
+    result.geometry.coordinates = polys[0]
+  } else {
+    result.geometry.type = 'MultiPolygon'
+    result.geometry.coordinates = polys
+  }
+  return result
+}
+
+// Fraction of a country's total component area a secondary landmass must
+// reach to be kept when reducing to significant landmasses; the largest
+// polygon is always kept regardless of this threshold.
+const SIGNIFICANT_LANDMASS_FRACTION = 0.01
+
+/**
+ * Reduces a Polygon/MultiPolygon to its significant landmasses: the largest
+ * component is always kept, and any other component is kept only if its area
+ * is at least `fraction` of the total. Used to keep hitbox buffering focused
+ * on a country's meaningful territory rather than every remote islet.
+ */
+function reduceToSignificantLandmasses (feature, fraction = SIGNIFICANT_LANDMASS_FRACTION) {
+  if (!feature || !feature.geometry) return null
+  if (feature.geometry.type === 'Polygon') return feature
+  if (feature.geometry.type !== 'MultiPolygon') return null
+
+  const components = []
+  let totalArea = 0
+
+  for (const rings of feature.geometry.coordinates) {
+    if (!rings || !rings[0] || rings[0].length < 4) continue
+    try {
+      const area = turf.area(turf.polygon(rings))
+      components.push({ rings, area })
+      totalArea += area
+    } catch (e) {}
+  }
+
+  if (components.length === 0) return null
+
+  components.sort((a, b) => b.area - a.area)
+  const kept = components.filter((c, i) => i === 0 || c.area >= totalArea * fraction)
+
+  const clone = JSON.parse(JSON.stringify(feature))
+  if (kept.length === 1) {
+    clone.geometry.type = 'Polygon'
+    clone.geometry.coordinates = kept[0].rings
+  } else {
+    clone.geometry.type = 'MultiPolygon'
+    clone.geometry.coordinates = kept.map(c => c.rings)
+  }
+  return clone
+}
+
+// How close a component's raw longitude extent must come to +/-180 before we
+// treat it as antimeridian-adjacent. Needs to comfortably cover how far a
+// BUFFER_KM buffer can push a coastline in longitude degrees, which grows at
+// higher latitudes (a fixed km distance spans more longitude near the poles).
+const ANTIMERIDIAN_MARGIN_DEG = 30
+
+// A component wider than this (in longitude degrees) is split into narrower
+// bands before buffering. Turf's buffer flattens a shape into a single planar
+// projection, which distorts badly across a very wide span — splitting keeps
+// each piece buffered accurately, and also keeps whichever band ends up near
+// the antimeridian small enough for the rotation-and-split logic to handle.
+const MAX_COMPONENT_LON_SPAN_DEG = 50
+
+/**
+ * Splits a polygon's coordinate rings into narrower longitude bands if its
+ * span exceeds maxSpanDeg. Returns an array of ring-sets (one per band), or
+ * the original rings unchanged, wrapped in an array, if no split is needed.
+ */
+function splitIntoLonBands (rings, maxSpanDeg) {
+  let minLon = Infinity
+  let maxLon = -Infinity
+  for (const point of rings[0]) {
+    if (point[0] < minLon) minLon = point[0]
+    if (point[0] > maxLon) maxLon = point[0]
+  }
+  const span = maxLon - minLon
+  if (span <= maxSpanDeg) return [rings]
+
+  const bandCount = Math.ceil(span / maxSpanDeg)
+  const bandWidth = span / bandCount
+  const feature = turf.polygon(rings)
+  const bands = []
+
+  for (let i = 0; i < bandCount; i++) {
+    const lo = minLon + i * bandWidth
+    const hi = i === bandCount - 1 ? maxLon : lo + bandWidth
+    try {
+      const clipped = turf.bboxClip(feature, [lo, -90, hi, 90])
+      const ringSets = clipped?.geometry?.type === 'Polygon'
+        ? [clipped.geometry.coordinates]
+        : clipped?.geometry?.type === 'MultiPolygon'
+          ? clipped.geometry.coordinates
+          : []
+      for (const bandRings of ringSets) {
+        if (bandRings[0] && bandRings[0].length >= 4) bands.push(bandRings)
+      }
+    } catch (e) {}
+  }
+
+  return bands.length > 0 ? bands : [rings]
+}
+
+/**
+ * Buffers an entire country as one combined shape: all landmass components
+ * (after band-splitting any that are individually too wide) are merged into
+ * a single Polygon/MultiPolygon, rotated together if the combined extent
+ * comes close to the antimeridian, buffered in one pass, then split back
+ * into standard GeoJSON. Buffering everything together in one call lets
+ * Turf's own multi-part buffer fuse nearby landmasses natively — buffering
+ * components independently and unioning the results afterward can bridge
+ * antimeridian-split pieces with spurious edges, since two independently
+ * split shapes being merged don't share a consistent seam.
+ * Antarctica wraps around the pole rather than crossing the antimeridian in
+ * the usual sense, so it's buffered directly without any of this handling.
+ * When `diagnostics` is provided, a record of the outcome is appended to it.
+ */
+function bufferCountry (feature, bufferKm, code, diagnostics) {
+  if (code === 'AQ') {
+    try {
+      return turf.buffer(feature, bufferKm, { units: 'kilometers' })
+    } catch (e) {
+      return null
+    }
+  }
+
+  const geom = feature.geometry
+  const rawComponents = geom.type === 'Polygon' ? [geom.coordinates] : geom.coordinates
+  const components = rawComponents.flatMap(rings => splitIntoLonBands(rings, MAX_COMPONENT_LON_SPAN_DEG))
+  if (components.length === 0) return null
+
+  const combined = {
+    type: 'Feature',
+    properties: {},
+    geometry: components.length === 1
+      ? { type: 'Polygon', coordinates: components[0] }
+      : { type: 'MultiPolygon', coordinates: components }
+  }
+
+  let minLon = Infinity
+  let maxLon = -Infinity
+  turf.coordEach(combined, c => {
+    if (c[0] < minLon) minLon = c[0]
+    if (c[0] > maxLon) maxLon = c[0]
+  })
+  const needsRotation = minLon < -180 + ANTIMERIDIAN_MARGIN_DEG || maxLon > 180 - ANTIMERIDIAN_MARGIN_DEG
+  const record = { minLon, maxLon, needsRotation, outcome: 'ok' }
+  if (diagnostics) diagnostics.push(record)
+
+  const working = needsRotation ? rotateLongitude180(combined) : combined
+
+  let buf
+  try {
+    buf = turf.buffer(working, bufferKm, { units: 'kilometers' })
+  } catch (e) {
+    record.outcome = `buffer threw: ${e.message}`
+    return null
+  }
+  if (!buf) {
+    record.outcome = 'buffer returned nothing'
+    return null
+  }
+
+  // Cleanup self-intersections while the shape is still in whatever frame it
+  // was just buffered in (rotated or not), before any antimeridian split.
+  // Doing this after splitting would run it on a MultiPolygon whose pieces
+  // sit hundreds of degrees apart numerically, even though they're geographic
+  // neighbors across the seam.
+  try {
+    const unkinked = turf.buffer(buf, 0, { units: 'kilometers' })
+    if (unkinked && unkinked.geometry) buf = unkinked
+  } catch (e) {}
+
+  if (needsRotation) {
+    buf = unrotateAndSplit(buf)
+    if (!buf) {
+      record.outcome = 'unrotateAndSplit returned nothing'
+      return null
+    }
+  }
+
+  return buf
+}
+
 function cleanupGeometry (feature, minAreaKm2) {
   if (!feature || !feature.geometry) return null
   
@@ -87,10 +312,8 @@ function cleanupGeometry (feature, minAreaKm2) {
   let largestPoly = null
 
   const processPolygon = (rings) => {
-    // Outer ring must exist and have at least 4 coordinates
     if (!rings || !rings.length || !rings[0] || rings[0].length < 4) return
     
-    // Filter out inner rings (holes) that collapsed during simplification
     const validRings = rings.filter(ring => ring && ring.length >= 4)
     if (validRings.length === 0) return
 
@@ -99,15 +322,13 @@ function cleanupGeometry (feature, minAreaKm2) {
       const area = turf.area(poly) / 1e6
       
       if (area > maxArea) {
-         maxArea = area
-         largestPoly = validRings
+        maxArea = area
+        largestPoly = validRings
       }
       if (area >= minAreaKm2) {
-         validPolys.push(validRings)
+        validPolys.push(validRings)
       }
-    } catch (e) {
-      // Silently ignore structurally invalid sub-polygons
-    }
+    } catch (e) {}
   }
 
   if (geom.type === 'Polygon') {
@@ -118,8 +339,7 @@ function cleanupGeometry (feature, minAreaKm2) {
     }
   }
 
-  // ALWAYS keep the largest polygon, even if it's smaller than minAreaKm2.
-  // This completely prevents micro-states (like the Vatican) from disappearing.
+  // ALWAYS retain largest polygon so micro-states are never wiped
   if (validPolys.length === 0 && largestPoly) {
     validPolys.push(largestPoly)
   }
@@ -138,10 +358,6 @@ function cleanupGeometry (feature, minAreaKm2) {
   return clone
 }
 
-/**
- * Isolates and discards specific corrupted sub-polygons that d3-geo evaluates as inverted.
- * This targets the "Indonesia archipelago bug" without failing the entire build.
- */
 function filterInvertedPolygons (feature, contextName) {
   const clone = JSON.parse(JSON.stringify(feature))
   const geom = clone.geometry || clone
@@ -155,6 +371,7 @@ function filterInvertedPolygons (feature, contextName) {
   } else if (geom.type === 'MultiPolygon') {
     const validPolys = []
     let dropped = 0
+    const droppedDetails = []
 
     for (const rings of geom.coordinates) {
       const testFeature = { type: 'Feature', geometry: { type: 'Polygon', coordinates: rings }, properties: {} }
@@ -162,6 +379,13 @@ function filterInvertedPolygons (feature, contextName) {
         validPolys.push(rings)
       } else {
         dropped++
+        try {
+          const bbox = turf.bbox(testFeature)
+          const area = Math.round(turf.area(testFeature) / 1e6)
+          droppedDetails.push(`lon ${bbox[0].toFixed(1)}..${bbox[2].toFixed(1)}, ~${area}km²`)
+        } catch (e) {
+          droppedDetails.push('(unmeasurable)')
+        }
       }
     }
     
@@ -171,7 +395,20 @@ function filterInvertedPolygons (feature, contextName) {
     }
     
     if (dropped > 0) {
-      console.warn(`    [!] Dropped ${dropped} inverted sub-polygon(s) for ${contextName}`)
+      const keptDetails = validPolys.map(rings => {
+        const testFeature = { type: 'Feature', geometry: { type: 'Polygon', coordinates: rings }, properties: {} }
+        try {
+          const bbox = turf.bbox(testFeature)
+          const area = Math.round(turf.area(testFeature) / 1e6)
+          return `lon ${bbox[0].toFixed(1)}..${bbox[2].toFixed(1)}, ~${area}km²`
+        } catch (e) {
+          return '(unmeasurable)'
+        }
+      })
+      console.warn(
+        `    [!] Dropped ${dropped} inverted sub-polygon(s) for ${contextName}: ${droppedDetails.join('; ')}. ` +
+        `Kept: ${keptDetails.join('; ')}`
+      )
       if (validPolys.length === 1) {
         geom.type = 'Polygon'
         geom.coordinates = validPolys[0]
@@ -184,17 +421,13 @@ function filterInvertedPolygons (feature, contextName) {
   return clone
 }
 
-/**
- * Strict final sanity check to prevent bad data from ever reaching production.
- */
 function assertValidSphericalPolygon (feature, contextMsg) {
   if (geoContains(feature, KNOWN_EMPTY_POINT)) {
-    console.error(`\n======================================================`)
-    console.error(`FATAL ERROR: Spherical winding sanity check failed!`)
+    console.error('\n======================================================')
+    console.error('FATAL ERROR: Spherical winding sanity check failed!')
     console.error(`Geometry for ${contextMsg} covers Point Nemo.`)
-    console.error(`This indicates an inverted polygon that would break the game.`)
-    console.error(`Aborting build to prevent deploying bad data.`)
-    console.error(`======================================================\n`)
+    console.error('Aborting build to prevent deploying bad data.')
+    console.error('======================================================\n')
     process.exit(1)
   }
 }
@@ -233,89 +466,82 @@ async function main () {
     try {
       const rawAreaKm2 = turf.area(feature) / 1e6
 
-      // 1. Simplify polygon (skip for micro-states like Vatican to avoid completely destroying them)
       if (rawAreaKm2 < SKIP_SIMPLIFY_AREA_KM2) {
         simplified = JSON.parse(JSON.stringify(feature))
       } else {
         simplified = turf.simplify(feature, { tolerance: SIMPLIFY_TOLERANCE, highQuality: false })
       }
       
-      // 2. Standard GIS trick: buffer(0) dissolves self-intersections/bow-ties caused by simplify
       try {
         const unkinked = turf.buffer(simplified, 0, { units: 'kilometers' })
         if (unkinked && (unkinked.geometry.type === 'Polygon' || unkinked.geometry.type === 'MultiPolygon')) {
           simplified = unkinked
         }
-      } catch (e) {
-        // Silently fallback to raw simplified geometry if JSTS throws
-      }
+      } catch (e) {}
 
-      // 3. Clean up microscopic remnants (islands smaller than MIN_AREA_KM2)
       simplified = cleanupGeometry(simplified, MIN_AREA_KM2)
       if (!simplified) throw new Error('geometry completely collapsed after simplification')
 
-      // 4. Force d3-geo winding (CLOCKWISE exterior rings).
-      // `reverse: true` explicitly creates CW rings, which d3-geo interprets as localized 
-      // regions. Default (CCW) is interpreted as "covering the rest of the Earth".
       simplified = turf.rewind(simplified, { reverse: true, mutate: false })
-
-      // 5. Catch and discard any sub-polygons that STILL act as inverted spheres
       simplified = filterInvertedPolygons(simplified, `${nameEn} (visual boundary)`)
       if (!simplified) throw new Error('all sub-polygons were inverted and dropped')
 
-      // 6. Absolute final failsafe
       assertValidSphericalPolygon(simplified, `${nameEn} (visual boundary)`)
+      simplified = truncateCoordinates(simplified, 3)
 
       areaKm2 = turf.area(simplified) / 1e6
       if (!Number.isFinite(areaKm2)) throw new Error('non-finite area')
       if (areaKm2 <= 0) throw new Error('area is zero or negative')
       
-      // Only strictly enforce minimum area constraints on unplayable map artifacts.
-      // If it has a real ISO code (like the Vatican), we want it in the game!
-      if (areaKm2 < MIN_AREA_KM2 && !hasRealCode) {
+      if (areaKm2 < 0.01 && !hasRealCode) {
         throw new Error(`area too small: ${areaKm2.toFixed(4)}km²`)
       }
 
-      // Verify representative point is actually inside the polygon
       rep = turf.pointOnFeature(simplified)
       if (!turf.booleanPointInPolygon(rep, simplified)) {
         throw new Error('representative point not inside polygon')
       }
 
-      // Handle hit-box operations based on country sizes
       if (hasRealCode) {
-        if (areaKm2 >= BIG_COUNTRY_AREA) {
-          // A. Big Countries: Do not buffer
-          bufferedFeature = JSON.parse(JSON.stringify(simplified))
-        } else if (areaKm2 < SMALL_COUNTRY_AREA) {
-          // B. Small Countries: Approximate to a simple circle
-          bufferedFeature = turf.circle(rep, SMALL_COUNTRY_RADIUS_KM, { units: 'kilometers', steps: 64 })
+        if (areaKm2 < SMALL_COUNTRY_AREA) {
+          // Small micro-states: 500km circle around centroid
+          bufferedFeature = turf.circle(rep, SMALL_COUNTRY_RADIUS_KM, { units: 'kilometers', steps: CIRCLE_STEPS })
           bufferedFeature = turf.rewind(bufferedFeature, { reverse: true, mutate: false })
           bufferedFeature = filterInvertedPolygons(bufferedFeature, `${nameEn} (small circle)`)
           assertValidSphericalPolygon(bufferedFeature, `${nameEn} (small circle)`)
         } else {
-          // C. Middle-Sized Countries: Remove holes, then buffer
+          // Medium and large countries: 500km buffer over the significant landmasses,
+          // seamlessly fused into one hitbox
           const noHoles = removeHoles(simplified)
-          bufferedFeature = turf.buffer(noHoles, BUFFER_KM, { units: 'kilometers' })
-          
-          // Turf buffer sometimes creates tiny artifacts; buffer(0) safely dissolves them
-          try {
-            const unkinkedBuf = turf.buffer(bufferedFeature, 0, { units: 'kilometers' })
-            if (unkinkedBuf && (unkinkedBuf.geometry.type === 'Polygon' || unkinkedBuf.geometry.type === 'MultiPolygon')) {
-              bufferedFeature = unkinkedBuf
-            }
-          } catch(e) {}
-          
-          bufferedFeature = cleanupGeometry(bufferedFeature, 1) || bufferedFeature
-          bufferedFeature = turf.rewind(bufferedFeature, { reverse: true, mutate: false })
-          
-          // Fallback mechanism: Turf planar buffers across the Antimeridian (like Fiji) 
-          // usually produce garbage geometries that evaluate as inverted.
-          bufferedFeature = filterInvertedPolygons(bufferedFeature, `${nameEn} (buffered hit-box)`)
-          
+          const significant = reduceToSignificantLandmasses(noHoles)
+          const bufferDiagnostics = []
+          bufferedFeature = significant ? bufferCountry(significant, BUFFER_KM, code, bufferDiagnostics) : null
+          const rawShape = bufferedFeature
+            ? `${bufferedFeature.geometry.type} with ${bufferedFeature.geometry.type === 'MultiPolygon' ? bufferedFeature.geometry.coordinates.length : 1} part(s)`
+            : 'nothing'
+          const formatDiagnostic = d => `[${d.minLon.toFixed(1)}..${d.maxLon.toFixed(1)}${d.needsRotation ? ' rotated' : ''}: ${d.outcome}]`
+          const problems = bufferDiagnostics.filter(d => d.outcome !== 'ok')
+
+          if (bufferedFeature) {
+            bufferedFeature = cleanupGeometry(bufferedFeature, 1) || bufferedFeature
+            bufferedFeature = turf.rewind(bufferedFeature, { reverse: true, mutate: false })
+            bufferedFeature = filterInvertedPolygons(bufferedFeature, `${nameEn} (buffered hit-box)`)
+          }
+
+          if (bufferedFeature && problems.length > 0) {
+            console.warn(
+              `    [!] ${nameEn} buffered hit-box succeeded but had issues (${bufferDiagnostics.length} components): ` +
+              `${bufferDiagnostics.map(formatDiagnostic).join(' ')}. Raw merge was ${rawShape}.`
+            )
+          }
+
           if (!bufferedFeature) {
-            console.warn(`    [!] Turf buffer failed (likely antimeridian crossing) for ${nameEn}. Falling back to 500km circle.`)
-            bufferedFeature = turf.circle(rep, BUFFER_KM, { units: 'kilometers', steps: 64 }) // Generous 500km radius fallback
+            console.warn(
+              `    [!] Buffer failed for ${nameEn} (${bufferDiagnostics.length} components): ` +
+              `${bufferDiagnostics.map(formatDiagnostic).join(' ')}. ` +
+              `Raw merge was ${rawShape}. Falling back to 500km circle.`
+            )
+            bufferedFeature = turf.circle(rep, SMALL_COUNTRY_RADIUS_KM, { units: 'kilometers', steps: CIRCLE_STEPS })
             bufferedFeature = turf.rewind(bufferedFeature, { reverse: true, mutate: false })
             bufferedFeature = filterInvertedPolygons(bufferedFeature, `${nameEn} (fallback circle)`)
             if (!bufferedFeature) throw new Error('Fallback circle also inverted')
@@ -324,6 +550,7 @@ async function main () {
             assertValidSphericalPolygon(bufferedFeature, `${nameEn} (buffered hit-box)`)
           }
         }
+        bufferedFeature = truncateCoordinates(bufferedFeature, 3)
       }
     } catch (err) {
       console.warn(`  skipping ${nameEn} (${rawCode}): ${err.message}`)
@@ -335,7 +562,7 @@ async function main () {
     simplified.properties = { code }
     boundaries.features.push(simplified)
 
-    if (!hasRealCode) continue // drawn on the globe, but not playable/findable
+    if (!hasRealCode) continue
 
     bufferedFeature.properties = { code }
     buffered.features.push(bufferedFeature)
@@ -343,15 +570,15 @@ async function main () {
       code,
       en: nameEn,
       ...getCountryNames(code, nameEn, NAME_LOCALES),
-      lat,
-      lon,
+      lat: Math.round(lat * 1000) / 1000,
+      lon: Math.round(lon * 1000) / 1000,
       area: Math.round(areaKm2),
     })
   }
 
   writeFileSync(path.join(OUT_DIR, 'countries.geo.json'), JSON.stringify(boundaries))
   writeFileSync(path.join(OUT_DIR, 'countries.buffered.geo.json'), JSON.stringify(buffered))
-  writeFileSync(path.join(OUT_DIR, 'countries.meta.json'), JSON.stringify(meta, null, 2))
+  writeFileSync(path.join(OUT_DIR, 'countries.meta.json'), JSON.stringify(meta))
 
   console.log(`\nWrote ${meta.length} countries to src/data/ (skipped ${skipped}).`)
   console.log('countries.geo.json + countries.buffered.geo.json + countries.meta.json are ready.')

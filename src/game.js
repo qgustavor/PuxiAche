@@ -1,7 +1,17 @@
-import { COUNTRY_LIST, isPointOnCountry } from './data/countryData.js'
 import { haversineKm } from './geo.js'
 import { generateSeed, mulberry32, pickRandom } from './rng.js'
 import { AuditTrail, generateGameId } from './audit.js'
+
+let COUNTRY_LIST = []
+let isPointOnCountry = null
+
+export async function loadGameData () {
+  if (COUNTRY_LIST.length === 0) {
+    const data = await import('./data/countryData.js')
+    COUNTRY_LIST = data.COUNTRY_LIST
+    isPointOnCountry = data.isPointOnCountry
+  }
+}
 
 export const GAME_DURATION_MS = 60000
 export const SMALL_COUNTRY_AREA_KM2 = 30000
