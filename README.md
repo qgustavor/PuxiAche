@@ -18,3 +18,9 @@ A spin-the-globe geography game! Spin a 3D globe and find as many countries as y
 ## Contributing
 
 Want to help build or translate the game? See [CONTRIBUTING.md](./CONTRIBUTING.md) for the stack, project layout, and translation instructions.
+
+## Localized URLs and social previews
+
+The public entry points are `/en/`, `/pt/`, and `/es/`. Visiting `/` redirects to the saved language when available, otherwise the browser language, with English as the fallback.
+
+Run `bun run generate:pages` to refresh the localized HTML metadata and `bun run generate:og` to rebuild `public/og-en.png`, `public/og-pt.png`, and `public/og-es.png`. The OG generator uses Takumi and the existing globe/logo preview as a shared base, then renders only the translated tagline for each locale.

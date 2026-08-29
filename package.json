@@ -5,13 +5,15 @@
   "type": "module",
   "description": "PuxiAche — a spin-the-globe geography game!",
   "scripts": {
-    "predev": "bun run scripts/check-boundary-data.mjs",
+    "predev": "bun run scripts/check-boundary-data.mjs && bun run generate:pages",
     "dev": "concurrently -k -n vite,firebase -c blue,yellow \"vite\" \"firebase emulators:start --only database --project demo-puxiache\"",
-    "prebuild": "bun run scripts/check-boundary-data.mjs",
+    "prebuild": "bun run scripts/check-boundary-data.mjs && bun run generate:pages && bun run generate:og",
     "build": "vite build",
     "preview": "vite preview",
     "build:countries": "bun run scripts/build-countries.mjs",
-    "update:countries": "bun run scripts/update-countries.mjs"
+    "update:countries": "bun run scripts/update-countries.mjs",
+    "generate:pages": "bun run scripts/generate-localized-pages.mjs",
+    "generate:og": "bun run scripts/generate-og-images.mjs"
   },
   "dependencies": {
     "@urlpack/msgpack": "^2.0.1",
@@ -20,6 +22,7 @@
     "canvas-confetti": "^1.9.4",
     "d3-geo": "^3.1.1",
     "lucide-vue-next": "^1.0.0",
+    "takumi-js": "^2.13.2",
     "three": "^0.185.1",
     "vue": "^3.5.41",
     "vue-i18n": "^11.4.9"
