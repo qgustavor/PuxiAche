@@ -25,7 +25,7 @@ const NAME_PROP = 'name'
 const SIMPLIFY_TOLERANCE = 0.08 // degrees
 
 // Game Design parameters
-const BUFFER_KM = 500
+const BUFFER_KM = 900
 const SMALL_COUNTRY_AREA = 1000 // < 1,000 km²: approximate to circle
 const SMALL_COUNTRY_RADIUS_KM = 500
 const CIRCLE_STEPS = 48
